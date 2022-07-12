@@ -94,7 +94,7 @@ def train(model, train_loader, val_loader, epochs):
     scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=0.05 * num_train_optimization_steps,
                                                 num_training_steps=num_train_optimization_steps)  # PyTorch scheduler
 
-    criterion = torch.nn.L1Loss()
+    criterion = torch.nn.L1Loss() #Loss関数
     scaler = torch.cuda.amp.GradScaler()
 
     for e in range(epochs):
@@ -106,25 +106,26 @@ def train(model, train_loader, val_loader, epochs):
 
         for idx, data in enumerate(tbar):
             inputs, target = read_data(data)
-
-            with torch.cuda.amp.autocast():
+                    
+            with torch.cuda.amp.autocast():#混合精度学習
                 pred = model(*inputs)
                 loss = criterion(pred, target)
-            scaler.scale(loss).backward()
-            if idx % args.accumulation_steps == 0 or idx == len(tbar) - 1:
+            scaler.scale(loss).backward() #逆伝播
+            if idx % args.accumulation_steps == 0 or idx == len(tbar) - 1: #accumulation_stepsごとに予測を抜ける and 最後に抜ける。
                 scaler.step(optimizer)
                 scaler.update()
                 optimizer.zero_grad()
                 scheduler.step()
 
-            loss_list.append(loss.detach().cpu().item())
-            preds.append(pred.detach().cpu().numpy().ravel())
-            labels.append(target.detach().cpu().numpy().ravel())
+            loss_list.append(loss.detach().cpu().item()) #ロスを取り出す。
+            preds.append(pred.detach().cpu().numpy().ravel()) #予測値を取り出す
+            labels.append(target.detach().cpu().numpy().ravel()) #ラベルを取り出す
 
-            avg_loss = np.round(np.mean(loss_list), 4)
+            avg_loss = np.round(np.mean(loss_list), 4) #平均のロスを出す
 
             tbar.set_description(f"Epoch {e + 1} Loss: {avg_loss} lr: {scheduler.get_last_lr()}")
-
+        
+        #validationによるepochごとのロスを出す。
         y_val, y_pred = validate(model, val_loader)
         val_df["pred"] = val_df.groupby(["id", "cell_type"])["rank"].rank(pct=True)
         val_df.loc[val_df["cell_type"] == "markdown", "pred"] = y_pred
