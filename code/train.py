@@ -16,7 +16,7 @@ parser.add_argument('--model_name_or_path', type=str, default='microsoft/codeber
 parser.add_argument('--train_mark_path', type=str, default='./data/train_mark.csv')
 parser.add_argument('--train_features_path', type=str, default='./data/train_fts.json')
 parser.add_argument('--val_mark_path', type=str, default='./data/val_mark.csv')
-parser.add_argument('--val_features_path', type=str, default='./data/val_fts.csv')
+parser.add_argument('--val_features_path', type=str, default='./data/val_fts.json')
 parser.add_argument('--val_path', type=str, default="./data/val.csv")
 
 parser.add_argument('--md_max_len', type=int, default=64)
@@ -28,7 +28,7 @@ parser.add_argument('--n_workers', type=int, default=8)
 
 args = parser.parse_args()
 os.mkdir("./outputs")
-data_dir = Path('..//input/')
+data_dir = Path('../input/')
 
 train_df_mark = pd.read_csv(args.train_mark_path).drop("parent_id", axis=1).dropna().reset_index(drop=True)
 train_fts = json.load(open(args.train_features_path))
@@ -58,7 +58,7 @@ def read_data(data):
 
 
 def validate(model, val_loader):
-    model.eval()
+    model.module.eval()
 
     tbar = tqdm(val_loader, file=sys.stdout)
 
@@ -81,7 +81,7 @@ def validate(model, val_loader):
 def train(model, train_loader, val_loader, epochs):
     np.random.seed(0)
     # Creating optimizer and lr schedulers
-    param_optimizer = list(model.named_parameters())
+    param_optimizer = list(model.module.named_parameters())
     no_decay = ['bias', 'LayerNorm.bias', 'LayerNorm.weight']
     optimizer_grouped_parameters = [
         {'params': [p for n, p in param_optimizer if not any(nd in n for nd in no_decay)], 'weight_decay': 0.01},
@@ -94,11 +94,11 @@ def train(model, train_loader, val_loader, epochs):
     scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=0.05 * num_train_optimization_steps,
                                                 num_training_steps=num_train_optimization_steps)  # PyTorch scheduler
 
-    criterion = torch.nn.L1Loss() #Loss関数
+    criterion = torch.nn.L1Loss()
     scaler = torch.cuda.amp.GradScaler()
 
     for e in range(epochs):
-        model.train()
+        model.module.train()
         tbar = tqdm(train_loader, file=sys.stdout)
         loss_list = []
         preds = []
@@ -106,36 +106,38 @@ def train(model, train_loader, val_loader, epochs):
 
         for idx, data in enumerate(tbar):
             inputs, target = read_data(data)
-                    
-            with torch.cuda.amp.autocast():#混合精度学習
+
+            with torch.cuda.amp.autocast():
                 pred = model(*inputs)
                 loss = criterion(pred, target)
-            scaler.scale(loss).backward() #逆伝播
-            if idx % args.accumulation_steps == 0 or idx == len(tbar) - 1: #accumulation_stepsごとに予測を抜ける and 最後に抜ける。
+            scaler.scale(loss).backward()
+            if idx % args.accumulation_steps == 0 or idx == len(tbar) - 1:
                 scaler.step(optimizer)
                 scaler.update()
                 optimizer.zero_grad()
                 scheduler.step()
 
-            loss_list.append(loss.detach().cpu().item()) #ロスを取り出す。
-            preds.append(pred.detach().cpu().numpy().ravel()) #予測値を取り出す
-            labels.append(target.detach().cpu().numpy().ravel()) #ラベルを取り出す
+            loss_list.append(loss.detach().cpu().item())
+            preds.append(pred.detach().cpu().numpy().ravel())
+            labels.append(target.detach().cpu().numpy().ravel())
 
-            avg_loss = np.round(np.mean(loss_list), 4) #平均のロスを出す
+            avg_loss = np.round(np.mean(loss_list), 4)
 
             tbar.set_description(f"Epoch {e + 1} Loss: {avg_loss} lr: {scheduler.get_last_lr()}")
-        
-        #validationによるepochごとのロスを出す。
+           
+
         y_val, y_pred = validate(model, val_loader)
         val_df["pred"] = val_df.groupby(["id", "cell_type"])["rank"].rank(pct=True)
         val_df.loc[val_df["cell_type"] == "markdown", "pred"] = y_pred
         y_dummy = val_df.sort_values("pred").groupby('id')['cell_id'].apply(list)
         print("Preds score", kendall_tau(df_orders.loc[y_dummy.index], y_dummy))
-        torch.save(model.state_dict(), "./outputs/model.bin")
+        torch.save(model.module.state_dict(), "./outputs/model.bin")
 
     return model, y_pred
 
 
 model = MarkdownModel(args.model_name_or_path)
-model = model.cuda()
+model = torch.nn.DataParallel(model, device_ids= [0, 1])
+model.cuda()
 model, y_pred = train(model, train_loader, val_loader, epochs=args.epochs)
+
