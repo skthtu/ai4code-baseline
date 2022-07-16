@@ -1,20 +1,17 @@
-class CommonLitModel(nn.Module):
+class MarkdownModel(nn.Module):
     
-    def __init__(self):
-        super(CommonLitModel, self).__init__()
-        self.config = AutoConfig.from_pretrained(MODEL_NAME)
-        self.bert = AutoModel.from_pretrained(
-            MODEL_NAME
-        )
-        self.lstm = nn.LSTM(self.config.hidden_size, self.config.hidden_size, batch_first=True)
-        self.regressor = nn.Linear(self.config.hidden_size, 1)
+    def __init__(self, model_path):
+        super(MarkdownModel, self).__init__()
+        self.model = AutoModel.from_pretrained(model_path)
+        self.top = nn.Linear(769, 1)
+        self.cnn1 = nn.Conv1d(768, 256, kernel_size=2, padding=1)
+        self.cnn2 = nn.Conv1d(256, 1, kernel_size=2, padding=1)
 
     def forward(self, input_ids, attention_mask, token_type_ids):
-        outputs = self.bert(
-            input_ids,
-            attention_mask=attention_mask,
-            token_type_ids=token_type_ids,
-        )
-        out, _ = self.lstm(outputs['last_hidden_state'], None)
-        sequence_output = out[:, -1, :]
-        logits = self.regressor(sequence_output)
+        outputs = self.model(input_ids, attention_mask)
+        last_hidden_state = outputs['last_hidden_state'].permute(0, 2, 1)
+        cnn_embeddings = F.relu(self.cnn1(last_hidden_state))
+        cnn_embeddings = self.cnn2(cnn_embeddings)
+        logits, _ = torch.max(cnn_embeddings, 2)
+
+        return logits
