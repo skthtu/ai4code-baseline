@@ -7,8 +7,8 @@ class MarkdownModel(nn.Module):
         self.cnn1 = nn.Conv1d(768, 256, kernel_size=2, padding=1)
         self.cnn2 = nn.Conv1d(256, 1, kernel_size=2, padding=1)
 
-    def forward(self, input_ids, attention_mask, token_type_ids):
-        outputs = self.model(input_ids, attention_mask)
+    def forward(self,ids, mask, fts):
+        outputs = self.model(ids, mask)
         last_hidden_state = outputs['last_hidden_state'].permute(0, 2, 1)
         cnn_embeddings = F.relu(self.cnn1(last_hidden_state))
         cnn_embeddings = self.cnn2(cnn_embeddings)
