@@ -109,8 +109,8 @@ class AWP:
         for i in range(self.adv_step):
             self._attack_step() 
             with torch.cuda.amp.autocast():
-                tr_logits = self.model(x)
-                adv_loss = criterion(tr_logits, y)
+                out = self.model(x)
+                adv_loss = criterion(out, y)
                 adv_loss = adv_loss.mean()
             self.optimizer.zero_grad()
             self.scaler.scale(adv_loss).backward()
